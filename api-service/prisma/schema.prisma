@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Creator {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  mobileNumber String   @unique
+  passwordHash String
+  displayName  String
+  handle       String   @unique // used in the public share link: youtwin.ai/<handle>
+  // Google account is linked separately, after login, specifically to
+  // authorize YouTube channel access — not used for the app login itself.
+  googleSub    String?  @unique
+  email        String?  @unique
+  createdAt    DateTime @default(now())
+  twins        Twin[]
+}
+
+model Twin {
+  id              String   @id @default(uuid())
+  creator         Creator  @relation(fields: [creatorId], references: [id])
+  creatorId       String
+  channelId       String?
+  status          String   @default("queued") // queued|training|ready|error
+  toneMatch       Boolean  @default(true)
+  guardrails      Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  messages        Message[]
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  twin       Twin     @relation(fields: [twinId], references: [id])
+  twinId     String
+  role       String   // "viewer" | "twin"
+  content    String
+  grounded   Boolean  @default(true)
+  confidence Float    @default(0)
+  createdAt  DateTime @default(now())
+}

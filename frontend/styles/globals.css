@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background: #FAFAF9;
+  font-family: 'Inter', sans-serif;
+}
+
+.font-display { font-family: 'Space Grotesk', sans-serif; }
+.font-mono-timecode { font-family: 'IBM Plex Mono', monospace; }
+
+/* Scroll-reveal: paired with the useInView hook — elements start hidden
+   and slightly offset, then animate in once scrolled into view. */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.reveal-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes waveform-pulse {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.55); }
+}
+.waveform-bar {
+  animation: waveform-pulse 1.8s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.animate-float {
+  animation: float-slow 5s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(194, 42, 42, 0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(194, 42, 42, 0); }
+}
+.animate-glow {
+  animation: glow-pulse 2.2s ease-out infinite;
+}
+
+@keyframes marquee-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll 26s linear infinite;
+}
+
+/* ---- iOS-grade glass system ----
+   Real iOS glass ("Liquid Glass") isn't just blur — it boosts the
+   saturation of whatever's behind it, catches light along its top edge
+   like a physical material, and has a soft shimmer that sweeps across
+   on interaction. Plain backdrop-blur alone reads flat by comparison. */
+.glass-panel {
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 20px 50px rgba(0, 0, 0, 0.35);
+  position: relative;
+  overflow: hidden;
+}
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.12) 45%, transparent 60%);
+  transform: translateX(-120%);
+  transition: transform 0.9s ease;
+  pointer-events: none;
+}
+.glass-panel:hover::before {
+  transform: translateX(120%);
+}
+.glass-pill {
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+}
+
+/* Lighter-weight glass for sticky nav bars over a light/white page —
+   no shimmer sweep (that reads as a "card" interaction, not a
+   persistent bar) and a much smaller saturation boost, since it's
+   mostly frosting scrolled content rather than a colorful backdrop. */
+.glass-nav {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* ---- Light theme overrides ----
+   The glass system (.glass-panel/.glass-pill/.glass-nav) was built
+   assuming translucent WHITE tint over a DARK page — that's what makes
+   frosted glass read correctly. On a light page, the same white tint
+   just looks washed out/invisible, so light mode needs a translucent
+   DARK tint instead. These override the Tailwind bg-white/x and
+   border-white/x utility classes used alongside .glass-* in the
+   markup — higher specificity + !important is intentional here since
+   beating a utility class's specificity is exactly the point. */
+/* Scoped to .theme-aware — only pages that explicitly opt into the
+   light/dark toggle (currently login and home) carry this class on
+   their root element. Without this scoping, toggling to light theme
+   there would leak into every other still-dark-only page via the
+   shared data-theme attribute on <html>, making their glass panels
+   render dark-tinted-on-dark (nearly invisible) since those pages'
+   own backgrounds never actually became light. */
+[data-theme="light"] .theme-aware {
+  background: #F7F1E4;
+  color: #241E17;
+}
+[data-theme="light"] .theme-aware .glass-panel,
+[data-theme="light"] .theme-aware .glass-pill {
+  background: rgba(20, 16, 10, 0.06) !important;
+  border-color: rgba(20, 16, 10, 0.14) !important;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 0 1px rgba(20, 16, 10, 0.06);
+}
+[data-theme="light"] .theme-aware .glass-nav {
+  background: rgba(255, 255, 255, 0.82);
+}
+[data-theme="light"] .theme-aware .glass-panel::before {
+  background: linear-gradient(115deg, transparent 30%, rgba(0, 0, 0, 0.06) 45%, transparent 60%);
+}
+
+/* NOTE: an earlier "glass-luxe" variant with a nested gradient-filled
+   border div was removed here — nesting backdrop-filter inside another
+   element with an opaque colorful background causes the blur to apply
+   to THAT colorful layer instead of the real page background behind
+   everything, which just paints as a solid tinted color block instead
+   of actual glass. .glass-panel above (single layer, no opaque parent
+   between it and the true background) is the correct pattern. */
+
+@keyframes hue-drift {
+  0%, 100% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(25deg); }
+}
+.animate-hue-drift { animation: hue-drift 12s ease-in-out infinite; }
+
+@keyframes drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -30px) scale(1.1); }
+  66% { transform: translate(-25px, 25px) scale(0.95); }
+}
+@keyframes drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-35px, 30px) scale(1.08); }
+}
+.bg-orb-a { animation: drift-a 18s ease-in-out infinite; }
+.bg-orb-b { animation: drift-b 22s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
