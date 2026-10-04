@@ -455,12 +455,14 @@ router.get("/:id/viewers", requireAuth, requireOwnTwin, async (req, res) => {
       take: 500,
       select: { id: true, name: true, device: true, language: true, visits: true, firstSeen: true, lastSeen: true },
     });
-    const counts: { viewerId: string | null; role: string; grounded: boolean; _count: { _all: number } }[] =
-      await prisma.message.groupBy({
-        by: ["viewerId", "role", "grounded"],
-        where: { twinId, viewerId: { not: null } },
-        _count: { _all: true },
-      });
+    // Prisma's groupBy types reject a contextual type annotation, so the
+    // result is typed after the call instead.
+    type CountRow = { viewerId: string | null; role: string; grounded: boolean; _count: { _all: number } };
+    const counts = (await prisma.message.groupBy({
+      by: ["viewerId", "role", "grounded"],
+      where: { twinId, viewerId: { not: null } },
+      _count: { _all: true },
+    })) as unknown as CountRow[];
     const latest: { viewerId: string | null; content: string; createdAt: Date }[] = await prisma.message.findMany({
       where: { twinId, role: "viewer", viewerId: { not: null } },
       orderBy: { createdAt: "desc" },
