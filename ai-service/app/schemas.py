@@ -28,8 +28,16 @@ class PersonaProfile(BaseModel):
     top_vocabulary: list[str] = Field(default_factory=list)
     catchphrases: list[str] = Field(default_factory=list)
     sample_opening_line: str = ""
+    # Lines in the creator's own voice, picked by the LlamaIndex step in
+    # persona_file.py. Empty for personas built before it existed.
+    style_exemplars: list[str] = Field(default_factory=list)
     guardrails_enabled: bool = True
     tone_match_enabled: bool = True
+
+
+class ChatTurn(BaseModel):
+    role: Literal["viewer", "twin"]
+    content: str = Field(max_length=2000)
 
 
 class ChatRequest(BaseModel):
@@ -37,6 +45,19 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     language: str = "English"
+    # Lets a twin whose persona record was lost be rebuilt with the right
+    # name (see recovery.py). Optional — older callers still work.
+    creator_name: Optional[str] = None
+    # Playtime context: the video the viewer is watching and where they
+    # are in it (from the browser sidebar or a ?v=&t= deep link). Both
+    # optional; answers are then biased toward that part of that video.
+    video_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{11}$")
+    at_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
+    # The last few turns of this viewer's conversation, so follow-ups
+    # ("how much was it?") are understood. Optional.
+    history: list[ChatTurn] = Field(default_factory=list, max_length=8)
+    # The name the viewer gave on the share link's name step (greetings).
+    viewer_name: Optional[str] = Field(default=None, max_length=40)
 
 
 class Citation(BaseModel):
@@ -54,6 +75,10 @@ class ChatResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     refused: bool = False
     refusal_reason: Optional[str] = None
+
+
+class PurgeRequest(BaseModel):
+    twin_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class VideoGenRequest(BaseModel):

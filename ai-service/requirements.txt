@@ -1,26 +1,38 @@
-fastapi==0.115.0
+# Security update (Oct 2026): every pin below is free of known
+# vulnerabilities per `pip-audit` (PyPI advisory DB) except nltk, a
+# transitive dependency of llama-index-core with no fixed release yet; the
+# affected NLTK model-file APIs are never called by YouTwin.
+# Re-check with:  pip-audit -r requirements.txt
+fastapi==0.142.2
+# Pinned explicitly so FastAPI can't pull an untested Starlette.
+starlette==1.7.0
 uvicorn[standard]==0.30.6
-pydantic==2.9.2
-pydantic-settings==2.5.2
-python-dotenv==1.0.1
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
 
 # M1 - Multimodal Ingestion
 youtube-transcript-api==1.2.4
-yt-dlp==2024.8.6
+yt-dlp==2026.8.19
 faster-whisper==1.0.3
 google-api-python-client==2.143.0
 
 # M2 - Stylometric Extraction
-spacy==3.7.6
+spacy==3.7.5
+# persona definition file (sentence nodes + persona Document)
+llama-index-core==0.14.25
 
 # M3 - Vector Embedding & Indexing
-sentence-transformers==3.0.1
+sentence-transformers==6.1.0
 qdrant-client==1.11.0
 upstash-redis==1.1.0
 
 # M4 - RAG-based Inference
-langchain==0.2.16
-langchain-community==0.2.16
+# The retrieval -> guardrail -> prompt -> LLM chain is built on LangChain's
+# LCEL (langchain-core). The full `langchain` / `langchain-community`
+# packages were never imported and carried known vulnerabilities, so they
+# were removed.
+langchain-core==1.6.6
 ollama==0.3.3
 groq==0.11.0
 
@@ -28,3 +40,5 @@ groq==0.11.0
 numpy==1.26.4
 httpx==0.27.2
 tenacity==8.5.0
+# mcp_server.py (optional MCP tool server) runs in its own venv — see
+# requirements-mcp.txt.

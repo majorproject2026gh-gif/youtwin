@@ -15,6 +15,7 @@ from collections import Counter
 import spacy
 
 from .ingestion import VideoTranscript
+from .persona_file import select_style_exemplars
 from .schemas import PersonaProfile
 
 _nlp = None
@@ -56,10 +57,19 @@ def extract_persona(twin_id: str, creator_name: str, transcripts: list[VideoTran
     avg_sentence_length = sum(sentence_lengths) / len(sentence_lengths)
 
     total_words = len(full_text.split())
-    total_seconds = sum(
-        (seg.start_seconds for t in transcripts for seg in t.segments), 0
-    ) or 1
-    speaking_pace_wpm = round((total_words / max(total_seconds, 1)) * 60, 1)
+    # Spoken duration per video ≈ start of its last segment plus one
+    # average segment length. (This used to SUM every segment's start
+    # time, which grows quadratically with video length and produced a
+    # meaningless words-per-minute figure on the Review screen.)
+    total_seconds = 0.0
+    for t in transcripts:
+        if not t.segments:
+            continue
+        starts = [s.start_seconds for s in t.segments]
+        last = max(starts)
+        avg_gap = (last - min(starts)) / (len(starts) - 1) if len(starts) > 1 else 5
+        total_seconds += last + max(avg_gap, 1)
+    speaking_pace_wpm = round((total_words / total_seconds) * 60, 1) if total_seconds > 0 else 0.0
 
     words = re.findall(r"[a-zA-Z']+", full_text.lower())
     word_freq = Counter(w for w in words if w not in _STOPWORDS and len(w) > 2)
@@ -76,6 +86,13 @@ def extract_persona(twin_id: str, creator_name: str, transcripts: list[VideoTran
 
     sample_opening_line = sentences[0].text.strip() if sentences else ""
 
+    # LlamaIndex step: sentence nodes -> the lines that best carry this
+    # creator's voice, for the persona definition file + system prompt.
+    style_exemplars, _ = select_style_exemplars(
+        [(t.title, t.full_text) for t in transcripts],
+        top_vocabulary, catchphrases, set(_FILLER_TONE_WORDS),
+    )
+
     return PersonaProfile(
         twin_id=twin_id,
         creator_name=creator_name,
@@ -85,6 +102,7 @@ def extract_persona(twin_id: str, creator_name: str, transcripts: list[VideoTran
         top_vocabulary=top_vocabulary,
         catchphrases=catchphrases,
         sample_opening_line=sample_opening_line,
+        style_exemplars=style_exemplars,
     )
 
 
@@ -102,18 +120,34 @@ def build_system_prompt(persona: PersonaProfile) -> str:
     vocab = ", ".join(persona.top_vocabulary[:8])
     catchphrases = "; ".join(persona.catchphrases) or "none detected yet"
 
+    exemplars = ""
+    if persona.style_exemplars:
+        exemplars = (
+            "Example lines in their own words (style reference only — never "
+            "treat these as facts to answer from):\n"
+            + "\n".join(f"- \"{e[:220]}\"" for e in persona.style_exemplars[:5])
+            + "\n"
+        )
+
     return (
         f"You are {persona.creator_name}'s AI digital twin, speaking to a viewer "
         f"of {persona.creator_name}'s YouTube channel.\n"
         f"Voice: {tone}. Average sentence length ~{persona.avg_sentence_length} words. "
         f"Frequently used words: {vocab}.\n"
         f"Recurring phrases: {catchphrases}.\n"
+        f"{exemplars}"
         "Rules:\n"
-        "1. Only answer using the provided video context. Never invent facts, "
-        "products, or opinions the creator hasn't stated.\n"
-        "2. If the context doesn't clearly answer the question, say you're not "
-        "sure and haven't covered that in a video yet — never guess.\n"
+        "1. Only answer using the provided video excerpts. Never invent facts, "
+        "products, prices or opinions the creator hasn't stated — even if you know them.\n"
+        "2. If the excerpts don't clearly answer the question, reply exactly "
+        "NOT_IN_CONTEXT — never guess.\n"
         "3. Stay fully in character as the creator's voice at all times. "
         "Never break character or mention you are an AI unless directly asked.\n"
-        "4. Keep replies conversational and short, matching the creator's tone above."
+        "4. Keep replies conversational and short, matching the creator's tone above.\n"
+        f"5. The source video context was spoken aloud, so it may refer to you "
+        f"with a bare pronoun like \"me\" or \"I\" inside a list of other people's "
+        f"names (e.g. \"...Alex, Sam, and me\"). A text-chat viewer can't hear "
+        f"who \"me\" is, so when that happens, replace it with your own name, "
+        f"\"{persona.creator_name}\", instead of leaving a bare \"me\"/\"I\" next "
+        f"to other people's names."
     )

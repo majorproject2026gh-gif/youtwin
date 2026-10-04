@@ -1,0 +1,10 @@
+# Optional: only for running mcp_server.py (the MCP tool server) as its
+# own process. Kept out of requirements.txt so the deployed AI service
+# doesn't ship an extra server framework it never uses.
+#
+# Use a separate virtualenv:
+#   python -m venv .venv-mcp
+#   .venv-mcp/bin/pip install -r requirements.txt
+#   .venv-mcp/bin/pip install -r requirements-mcp.txt
+#   .venv-mcp/bin/python mcp_server.py
+fastmcp==4.0.10

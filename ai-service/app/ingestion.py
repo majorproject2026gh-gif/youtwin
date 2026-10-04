@@ -14,16 +14,20 @@ project supports):
 """
 from __future__ import annotations
 
+import html
+import re
+
 import os
 import tempfile
 import logging
 from dataclasses import dataclass, field
+from typing import Callable
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
-from .config import settings
+from .config import resolved_whisper_model, settings
 from .sample_data import SAMPLE_VIDEOS
 
 logger = logging.getLogger("youtwin.ingestion")
@@ -31,11 +35,60 @@ logger = logging.getLogger("youtwin.ingestion")
 # Same rationale as embeddings.py — Google's API client also wraps
 # network errors in its own exception classes, so a narrow type filter
 # doesn't reliably match. Retry broadly on these idempotent read calls.
+def _is_transient(exc: BaseException) -> bool:
+    # Configuration / "not found" errors are raised as RuntimeError or
+    # ValueError on purpose — retrying those just made a mistyped channel
+    # handle (or a missing API key) hang for minutes before failing, since
+    # the nested retries multiplied to ~25 attempts.
+    return not isinstance(exc, (RuntimeError, ValueError))
+
+
 network_retry = retry(
+    retry=retry_if_exception(_is_transient),
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     reraise=True,
 )
+
+
+def _fetch_video_title(video_id: str) -> str:
+    """Real video title for citations. Captions don't carry one, so every
+    captions-based citation used to show the raw 11-char video id as its
+    "title" in the chat's side-by-side player. Uses YouTube's public
+    oEmbed endpoint (no API key needed); falls back to the id."""
+    try:
+        import httpx
+
+        resp = httpx.get(
+            "https://www.youtube.com/oembed",
+            params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            title = (resp.json() or {}).get("title")
+            if title:
+                return str(title)
+    except Exception as exc:
+        logger.info("title lookup failed for %s: %s", video_id, exc)
+    return video_id
+
+
+_whisper_model = None
+
+
+def _get_whisper_model():
+    """Load the Whisper model once and reuse it — it was re-loaded from
+    disk for every single video, adding seconds and a large memory spike
+    per video on a memory-constrained host."""
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+
+        _whisper_model = WhisperModel(
+            resolved_whisper_model(), device=settings.whisper_device,
+            compute_type="int8" if settings.whisper_device == "cpu" else "float16",
+        )
+    return _whisper_model
 
 
 @dataclass
@@ -54,6 +107,37 @@ class VideoTranscript:
     @property
     def full_text(self) -> str:
         return " ".join(s.text for s in self.segments)
+
+
+# ---------------------------------------------------------------- cleaning
+
+# Non-speech caption tags ([Music], [Applause], (laughs), ♪) and speaker
+# arrows (>>) carry no meaning but used to be embedded and quoted as if
+# the creator had said them.
+_NOISE_RE = re.compile(
+    r"\[(?:[^\]]{0,30})\]"              # [Music], [Applause], [Laughter], [__]
+    r"|\((?:music|applause|laughs?|laughter|cheering|inaudible|silence)\)"
+    r"|[♪♫]+|>>+",
+    re.IGNORECASE,
+)
+_SPACE_RE = re.compile(r"\s+")
+
+
+def clean_caption_text(text: str) -> str:
+    text = html.unescape(text or "").replace("\n", " ")
+    return _SPACE_RE.sub(" ", _NOISE_RE.sub(" ", text)).strip()
+
+
+def clean_transcript(t: VideoTranscript) -> VideoTranscript:
+    """Drops non-speech tags and empty / repeated caption lines."""
+    segments: list[TranscriptSegment] = []
+    for seg in t.segments:
+        text = clean_caption_text(seg.text)
+        if not text or (segments and segments[-1].text.lower() == text.lower()):
+            continue
+        segments.append(TranscriptSegment(start_seconds=int(seg.start_seconds), text=text))
+    t.segments = segments
+    return t
 
 
 @network_retry
@@ -154,7 +238,15 @@ def fetch_captions(video_id: str) -> VideoTranscript | None:
     ingestion down the far less reliable Whisper/yt-dlp path.
     """
     try:
-        if hasattr(YouTubeTranscriptApi(), "fetch"):
+        if hasattr(YouTubeTranscriptApi(), "list"):
+            raw_segments = _fetch_best_transcript(video_id)
+            if raw_segments is None:
+                return None
+            segments = [
+                TranscriptSegment(start_seconds=int(s.start), text=s.text)
+                for s in raw_segments
+            ]
+        elif hasattr(YouTubeTranscriptApi(), "fetch"):
             raw_segments = list(YouTubeTranscriptApi().fetch(video_id))
             segments = [
                 TranscriptSegment(start_seconds=int(s.start), text=s.text)
@@ -184,8 +276,35 @@ def fetch_captions(video_id: str) -> VideoTranscript | None:
         return None
 
     return VideoTranscript(
-        video_id=video_id, title=video_id, source="captions", segments=segments
+        video_id=video_id, title=_fetch_video_title(video_id), source="captions", segments=segments
     )
+
+
+_ENGLISH = ["en", "en-US", "en-GB", "en-IN", "en-CA", "en-AU"]
+
+
+def _fetch_best_transcript(video_id: str):
+    """Best available caption track, in order: English written by the
+    creator, English auto-captions, any other track machine-translated to
+    English by YouTube, then that track as-is. (A plain fetch() only ever
+    tried English, so every Hindi or Marathi video fell through to the
+    slow, less accurate Whisper path.)"""
+    tracks = YouTubeTranscriptApi().list(video_id)
+    for finder in (tracks.find_manually_created_transcript, tracks.find_generated_transcript):
+        try:
+            return list(finder(_ENGLISH).fetch())
+        except NoTranscriptFound:
+            continue
+    others = sorted(tracks, key=lambda t: t.is_generated)   # creator-written first
+    if not others:
+        return None
+    best = others[0]
+    if best.is_translatable:
+        try:
+            return list(best.translate("en").fetch())
+        except Exception as exc:
+            logger.info("caption translation failed for %s (%s): %s", video_id, best.language_code, exc)
+    return list(best.fetch())
 
 
 def transcribe_with_whisper(video_url: str) -> VideoTranscript:
@@ -204,7 +323,6 @@ def transcribe_with_whisper(video_url: str) -> VideoTranscript:
       3. Plain web-client extraction as a last resort.
     """
     import yt_dlp
-    from faster_whisper import WhisperModel
 
     with tempfile.TemporaryDirectory() as tmp:
         audio_path = os.path.join(tmp, "audio.%(ext)s")
@@ -246,11 +364,13 @@ def transcribe_with_whisper(video_url: str) -> VideoTranscript:
         video_id = info["id"]
         title = info.get("title", video_id)
 
-        model = WhisperModel(
-            settings.whisper_model_size, device=settings.whisper_device,
-            compute_type="int8" if settings.whisper_device == "cpu" else "float16",
+        model = _get_whisper_model()
+        # vad_filter skips music/silence (where Whisper invents text);
+        # condition_on_previous_text=False stops one misheard line from
+        # repeating itself for the rest of the video.
+        segments_iter, _info = model.transcribe(
+            wav_path, beam_size=5, vad_filter=True, condition_on_previous_text=False,
         )
-        segments_iter, _info = model.transcribe(wav_path, beam_size=5)
 
         segments = [
             TranscriptSegment(start_seconds=int(seg.start), text=seg.text.strip())
@@ -277,16 +397,48 @@ def load_sample_videos() -> list[VideoTranscript]:
     return out
 
 
+def _extract_video_id(url_or_id: str) -> str:
+    """Pulls a bare 11-char video ID out of any real-world YouTube URL
+    format. The previous version only handled watch?v=XXXX and silently
+    passed everything else through unchanged — including youtu.be/XXXX
+    short-links, which is what YouTube's own Share button generates, so
+    that was a genuine, likely-to-be-hit bug, not an edge case."""
+    s = url_or_id.strip()
+    if "v=" in s:
+        return s.split("v=")[-1].split("&")[0].split("#")[0]
+    if "youtu.be/" in s:
+        return s.split("youtu.be/")[-1].split("?")[0].split("&")[0]
+    for marker in ("/shorts/", "/embed/", "/live/"):
+        if marker in s:
+            return s.split(marker)[-1].split("?")[0].split("&")[0].split("/")[0]
+    # Already a bare ID (or an unrecognized format) — pass through as-is.
+    return s
+
+
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def _valid_video_id(url_or_id: str) -> str:
+    """Only real 11-character YouTube ids get anywhere near yt-dlp or the
+    transcript API — anything else is rejected instead of being passed
+    through as a URL fragment."""
+    vid = _extract_video_id(url_or_id)
+    if not _VIDEO_ID_RE.match(vid):
+        raise ValueError(f"Not a valid YouTube video link: {url_or_id[:80]!r}")
+    return vid
+
+
 def ingest(
     channel_id: str | None = None,
     video_urls: list[str] | None = None,
     use_sample_data: bool = False,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> list[VideoTranscript]:
     """Top-level ingestion entrypoint. Tries captions first for every video,
     falls back to Whisper transcription, per the M1 spec ("When missing,
     it extracts raw audio and transcribes it with Whisper-v3")."""
     if use_sample_data:
-        return load_sample_videos()
+        return [clean_transcript(t) for t in load_sample_videos()]
 
     ids: list[str] = []
     if channel_id:
@@ -297,19 +449,31 @@ def ingest(
                 "Upload at least one video, or use 'Load sample creator' to test with mock data."
             )
     elif video_urls:
-        ids = [u.split("v=")[-1].split("&")[0] if "v=" in u else u for u in video_urls]
+        ids = [_valid_video_id(u) for u in video_urls]
     else:
         raise ValueError("Provide channel_id, video_urls, or use_sample_data=True")
 
     results: list[VideoTranscript] = []
     failures: list[str] = []
-    for vid in ids:
+    def report(done: int, stage: str) -> None:
+        if on_progress:
+            try:
+                on_progress(done, len(ids), stage)
+            except Exception:
+                pass  # progress reporting must never break ingestion
+
+    for i, vid in enumerate(ids):
         try:
             transcript = fetch_captions(vid)
             if transcript is None:
                 logger.info("no captions for %s, falling back to whisper", vid)
+                report(i, "transcribing_audio")
                 transcript = transcribe_with_whisper(f"https://youtube.com/watch?v={vid}")
+            transcript = clean_transcript(transcript)
+            if not transcript.segments:
+                raise ValueError("no speech found in this video")
             results.append(transcript)
+            report(i + 1, "fetching_captions")
         except Exception as exc:
             # A single video failing (YouTube bot-detection blocking the
             # audio download, an age-restricted/members-only video, a
