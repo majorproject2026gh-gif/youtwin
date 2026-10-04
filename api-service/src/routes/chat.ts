@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "../db";
 import axios from "axios";
 import {
-  aiService, cleanViewerName, deviceLabel, handleDbError, isValidId, isViewerId, requireAuth, AuthedRequest,
+  aiService,
+  callAi, cleanViewerName, deviceLabel, handleDbError, isValidId, isViewerId, requireAuth, AuthedRequest,
 } from "../lib";
 
 const router = Router();
@@ -131,7 +132,7 @@ router.post("/", async (req, res) => {
 
   let data;
   try {
-    ({ data } = await aiService.post("/chat", {
+    ({ data } = await callAi(() => aiService.post("/chat", {
       twin_id: twinId,
       message,
       language: language ?? "English",
@@ -140,7 +141,7 @@ router.post("/", async (req, res) => {
       at_seconds: videoId ? atSeconds : undefined,
       history: history?.filter((t) => t.content.trim()).slice(-6),
       viewer_name: viewerName ?? undefined,
-    }));
+    })));
   } catch (err) {
     // A twin that hasn't finished (or whose training data expired) is a
     // 404 from ai-service — tell the viewer that, not "unavailable".

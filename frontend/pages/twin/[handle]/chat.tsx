@@ -228,7 +228,7 @@ export default function ChatStep() {
         history,
         ...(viewer ? { viewerId: viewer.id, viewerName: viewer.name } : {}),
         ...(watching ? { videoId: watching.videoId, ...(watching.at !== undefined ? { atSeconds: watching.at } : {}) } : {}),
-      });
+      }, { timeout: 120_000 });
       setTurns((t) => [
         ...t,
         {

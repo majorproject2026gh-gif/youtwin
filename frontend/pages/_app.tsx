@@ -4,6 +4,7 @@ import { useEffect, type ReactElement, type ReactNode } from "react";
 import Head from "next/head";
 import { ThemeProvider } from "@/lib/theme";
 import { registerServiceWorker } from "@/lib/pwa";
+import { api } from "@/lib/api";
 import "../styles/globals.css";
 
 /**
@@ -21,6 +22,10 @@ type AppPropsWithLayout = AppProps & { Component: NextPageWithLayout };
 export default function App({ Component, pageProps }: AppPropsWithLayout) {
   const getLayout = Component.getLayout ?? ((page) => page);
   useEffect(() => registerServiceWorker(), []);
+  // Wake the free-tier servers as soon as anyone opens the site.
+  useEffect(() => {
+    api.get("/warmup", { timeout: 90_000 }).catch(() => {});
+  }, []);
   return (
     <ThemeProvider>
       <Head>

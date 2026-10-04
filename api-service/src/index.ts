@@ -8,7 +8,7 @@ import authRoutes from "./routes/auth";
 import twinRoutes from "./routes/twin";
 import chatRoutes from "./routes/chat";
 import videoRoutes from "./routes/video";
-import { clientKey } from "./lib";
+import { clientKey, wakeAiService } from "./lib";
 
 // Last-resort safety net: an unhandled promise rejection anywhere in the
 // process (e.g. a database call in a route we forgot to wrap in
@@ -149,6 +149,14 @@ app.use(ipCeiling);
 app.use(generalLimiter);
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+// Pages call this as soon as they open: it wakes this service (the request
+// itself) and starts waking ai-service in the background, so by the time
+// someone clicks Train or sends a question both are already up.
+app.get("/warmup", (_req, res) => {
+  void wakeAiService();
+  res.json({ status: "ok" });
+});
 
 app.use("/auth/login", authLimiter);
 app.use("/auth/signup", authLimiter);

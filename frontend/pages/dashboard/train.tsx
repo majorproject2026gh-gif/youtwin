@@ -88,7 +88,7 @@ export default function TrainStep() {
         ? { videoUrls: [trimmed], useSampleData: false }
         : { channelId: trimmed, useSampleData: false };
 
-      const { data } = await api.post("/twins", payload, { headers: authHeader(session) });
+      const { data } = await api.post("/twins", payload, { headers: authHeader(session), timeout: 120_000 });
       localStorage.setItem("youtwin_twinId", data.twinId);
       setTwinId(data.twinId);
       setStatus(null);

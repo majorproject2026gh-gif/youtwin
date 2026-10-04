@@ -158,3 +158,63 @@ export function clientKey(req: Request): string {
   const v = req.get("x-viewer-id");
   return isViewerId(v) ? `viewer:${v.toLowerCase()}` : `ip:${req.ip ?? "unknown"}`;
 }
+
+// ------------------------------------------------------- ai-service wake-up
+
+/**
+ * Render's free plan puts a service to sleep after 15 idle minutes, and
+ * waking ai-service (Python + the embedding model) takes 30-60 s — longer
+ * than the 30 s request timeout above. Instead of failing that first
+ * request, wake the service (poll /health until it answers) and then make
+ * the real call. One shared wake-up runs at a time however many requests
+ * arrive together.
+ */
+let aiWarmUntil = 0;
+let aiWaking: Promise<boolean> | null = null;
+const WARM_FOR_MS = 5 * 60_000;
+
+export function wakeAiService(maxMs = 90_000): Promise<boolean> {
+  if (Date.now() < aiWarmUntil) return Promise.resolve(true);
+  if (aiWaking) return aiWaking;
+  aiWaking = (async () => {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      try {
+        await aiService.get("/health", { timeout: 15_000 });
+        aiWarmUntil = Date.now() + WARM_FOR_MS;
+        return true;
+      } catch {
+        await new Promise((r) => setTimeout(r, 3_000));
+      }
+    }
+    return false;
+  })().finally(() => {
+    aiWaking = null;
+  });
+  return aiWaking;
+}
+
+/** Network-level failure or a Render "service starting" gateway error. */
+function looksAsleep(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  if (!err.response) return true; // timeout, reset, refused
+  return [502, 503, 504].includes(err.response.status);
+}
+
+/**
+ * Calls ai-service, waking it first if it may be asleep, and retries once
+ * if the call still fails the way a sleeping service fails.
+ */
+export async function callAi<T>(fn: () => Promise<T>): Promise<T> {
+  if (Date.now() >= aiWarmUntil) await wakeAiService();
+  try {
+    const result = await fn();
+    aiWarmUntil = Date.now() + WARM_FOR_MS;
+    return result;
+  } catch (err) {
+    if (!looksAsleep(err)) throw err;
+    aiWarmUntil = 0;
+    if (!(await wakeAiService())) throw err;
+    return fn();
+  }
+}

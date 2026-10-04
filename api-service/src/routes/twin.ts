@@ -3,7 +3,7 @@ import axios from "axios";
 import { z } from "zod";
 import { prisma } from "../db";
 import { Response, NextFunction } from "express";
-import { aiService, requireAuth, AuthedRequest, handleDbError, isValidId } from "../lib";
+import { aiService, callAi, requireAuth, AuthedRequest, handleDbError, isValidId } from "../lib";
 
 const router = Router();
 
@@ -226,9 +226,11 @@ router.post("/", requireAuth, async (req: AuthedRequest, res) => {
   }
 
   try {
-    await aiService.post(
-      `/ingest?creator_name=${encodeURIComponent(creator.displayName)}`,
-      { twin_id: twin.id, channel_id: channelId, video_urls: videoUrls, use_sample_data: useSampleData }
+    await callAi(() =>
+      aiService.post(
+        `/ingest?creator_name=${encodeURIComponent(creator.displayName)}`,
+        { twin_id: twin.id, channel_id: channelId, video_urls: videoUrls, use_sample_data: useSampleData }
+      )
     );
   } catch (err) {
     // This was a silent catch — swallowed the real cause (connection
