@@ -1,31 +1,30 @@
-import { Theme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme";
+import { Icon } from "./ui";
 
-export default function ThemeToggle({
-  theme,
-  onToggle,
-  className = "",
-}: {
-  theme: Theme;
-  onToggle: () => void;
-  className?: string;
-}) {
+/** The one theme switch — reads/writes the global theme context, so it
+ * behaves identically wherever it's placed. */
+export default function ThemeToggle({ className = "" }: { className?: string; theme?: unknown; onToggle?: unknown }) {
+  const { theme, toggleTheme } = useTheme();
+  const next = theme === "dark" ? "light" : "dark";
   return (
     <button
-      onClick={onToggle}
-      aria-label="Toggle light/dark theme"
-      title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-      className={`glass-pill flex h-9 w-9 items-center justify-center rounded-full border border-white/15 hover:bg-white/10 transition-colors ${className}`}
+      type="button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${next} theme`}
+      title={`Switch to ${next} theme`}
+      className={`group relative flex h-8 w-[52px] flex-shrink-0 items-center rounded-full border border-tint/10 bg-tint/[0.05] p-0.5 transition-colors hover:border-tint/20 ${className}`}
     >
-      {theme === "dark" ? (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-        </svg>
-      ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-        </svg>
-      )}
+      <span className="pointer-events-none absolute inset-0 flex items-center justify-between px-2 text-fg/35">
+        <Icon name="moon" size={12} />
+        <Icon name="sun" size={12} />
+      </span>
+      <span
+        className={`relative flex h-[26px] w-[26px] items-center justify-center rounded-full bg-gradient-to-b from-night-700 to-night-800 text-fg shadow-card ring-1 ring-tint/10 transition-transform duration-500 ease-out-expo ${
+          theme === "light" ? "translate-x-[20px]" : "translate-x-0"
+        }`}
+      >
+        <Icon name={theme === "dark" ? "moon" : "sun"} size={13} className="text-coral-400 transition-transform duration-500 group-hover:rotate-12" />
+      </span>
     </button>
   );
 }

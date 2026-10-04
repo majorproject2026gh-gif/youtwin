@@ -93,6 +93,13 @@ export default function StepHeader({
               AI video agent
             </Link>
             <Link
+              href="/dashboard/twins"
+              className="mb-2 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-[#606060] hover:bg-[#f2f2f2] transition-colors"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-coral-500" />
+              My Twins
+            </Link>
+            <Link
               href="/dashboard/analytics"
               className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-[#606060] hover:bg-[#f2f2f2] transition-colors"
             >

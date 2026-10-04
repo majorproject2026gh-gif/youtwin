@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
-import Link from "next/link";
-import { api, authHeader, IngestStatus, logout } from "@/lib/api";
-import Logo from "@/components/Logo";
+import { errorMessage } from "@/lib/browser";
+import { api, authHeader, IngestStatus } from "@/lib/api";
+import AppShell from "@/components/AppShell";
+import { Alert, Icon, PageHeader, RadialGauge, Spinner } from "@/components/ui";
+import { StageHandoff, withStudio } from "@/components/StudioWorkspace";
+import { useStudio } from "@/components/studio";
 
 const STAGE_LABELS: Record<string, string> = {
   queued: "Queued…",
@@ -14,14 +17,20 @@ const STAGE_LABELS: Record<string, string> = {
   error: "Something went wrong",
 };
 
+const PIPELINE: { key: IngestStatus["stage"]; label: string; icon: string }[] = [
+  { key: "queued", label: "Queued", icon: "clock" },
+  { key: "fetching_captions", label: "Fetching captions", icon: "youtube" },
+  { key: "transcribing_audio", label: "Transcribing audio", icon: "mic" },
+  { key: "extracting_style", label: "Learning the voice", icon: "wave" },
+  { key: "embedding", label: "Indexing the videos", icon: "database" },
+  { key: "ready", label: "Twin ready", icon: "check-circle" },
+];
+
 /**
- * The Train step is deliberately NOT built on the shared StepHeader
- * wizard template — this is the single moment in the whole flow with
- * real, dramatic state to show (a model actually training), so it gets
- * its own full-page, high-graphics presentation instead of living in a
- * small card in a sidebar layout. Every bit of the underlying logic
- * (polling, error recovery, direct-video-vs-channel detection) is
- * unchanged from the previous version — only the presentation differs.
+ * The Train step — the one moment in the flow with real, dramatic state
+ * to show (a model actually training), so it gets a live pipeline view
+ * and a large progress gauge. Polling, error recovery and the
+ * direct-video-vs-channel detection are unchanged.
  */
 export default function TrainStep() {
   const router = useRouter();
@@ -44,6 +53,17 @@ export default function TrainStep() {
     if (savedTwin) setTwinId(savedTwin);
   }, [router]);
 
+  // "New twin" (top bar) / "Train another video" navigate here with
+  // ?fresh=… — if this page is already open it doesn't remount, so the
+  // old twin's progress used to stay on screen. Reset explicitly.
+  useEffect(() => {
+    if (router.query.fresh) {
+      resetTraining();
+      setChannelId("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query.fresh]);
+
   function resetTraining() {
     if (pollRef.current) clearInterval(pollRef.current);
     localStorage.removeItem("youtwin_twinId");
@@ -53,7 +73,7 @@ export default function TrainStep() {
   }
 
   function isDirectVideoUrl(input: string): boolean {
-    return /(?:watch\?v=|youtu\.be\/)/.test(input);
+    return /(?:watch\?v=|youtu\.be\/|\/shorts\/)/.test(input);
   }
 
   async function startTraining(useSampleData: boolean) {
@@ -73,7 +93,7 @@ export default function TrainStep() {
       setTwinId(data.twinId);
       setStatus(null);
     } catch (err: any) {
-      setStartError(err?.response?.data?.error ?? "Couldn't start training. Is the backend running?");
+      setStartError(errorMessage(err, "Couldn't start training. Is the backend running?"));
     } finally {
       setStarting(false);
     }
@@ -109,6 +129,22 @@ export default function TrainStep() {
   }, [twinId, session]);
 
   const showStartForm = !twinId;
+  const { update: updateStudio } = useStudio();
+  // Publish live training state to the workspace blueprint.
+  useEffect(() => {
+    if (!status) return;
+    updateStudio({
+      knowledge: {
+        state: status.stage === "ready" ? "ready" : status.stage === "error" ? "error" : "training",
+        label: STAGE_LABELS[status.stage] ?? status.stage,
+        percent: status.percent,
+        videos: status.videos_total > 0 ? `${status.videos_processed}/${status.videos_total}` : undefined,
+        source: channelId.trim() || undefined,
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.stage, status?.percent, status?.videos_processed]);
+
   const showWaiting = !!twinId && !status;
   const isError = status?.stage === "error";
   const isReady = status?.stage === "ready";
@@ -117,164 +153,205 @@ export default function TrainStep() {
 
   const ringColor = isError ? "#C22A2A" : isReady ? "#10B981" : "#FF8266";
 
+  const stageIdx = status ? PIPELINE.findIndex((p) => p.key === status.stage) : -1;
+  const trimmed = channelId.trim();
+  const sourceHint = !trimmed
+    ? "Leave blank to train on bundled sample data — no YouTube access needed."
+    : isDirectVideoUrl(trimmed)
+    ? "Trains only on this specific video — other videos on the channel are ignored."
+    : "Trains on up to 6 recent videos from this channel.";
+
   return (
-    <div className="min-h-screen relative overflow-hidden bg-ink-950 flex flex-col">
-      {/* Full-bleed animated backdrop — same living-glass system as
-          login, but centered entirely around the training core visual. */}
-      <div
-        className="bg-orb-a pointer-events-none absolute -left-32 top-[15%] h-[520px] w-[520px] rounded-full opacity-40 blur-[120px]"
-        style={{ background: `radial-gradient(circle, ${ringColor} 0%, transparent 70%)` }}
-      />
-      <div
-        className="bg-orb-b pointer-events-none absolute right-[-20%] bottom-[10%] h-[480px] w-[480px] rounded-full opacity-30 blur-[120px]"
-        style={{ background: "radial-gradient(circle, #D9A441 0%, transparent 70%)" }}
-      />
-      <div
-        className="absolute inset-0 opacity-[0.12]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-          backgroundSize: "56px 56px",
-        }}
+    <AppShell setupStep={2} title="Train twin" accent={ringColor} accent2="#E0AE4E">
+      <PageHeader
+        compact
+        title="Your twin trains itself"
+        description="Ingests videos, learns the voice — watch it happen in real time."
       />
 
-      <nav className="relative flex items-center justify-between px-8 py-6">
-        <Link href="/home"><Logo dark /></Link>
-        <button
-          onClick={async () => { await logout(); router.push("/login"); }}
-          className="glass-pill rounded-full border border-white/15 px-4 py-2 text-xs text-paper-300 hover:bg-white/10 transition-colors"
-        >
-          Log out
-        </button>
-      </nav>
-
-      <div className="relative flex-1 flex flex-col items-center justify-center px-6 py-10 text-center">
-        <span className="font-mono-timecode text-xs tracking-[0.25em] text-paper-300 mb-4">
-          STEP 2 OF 4 &middot; TRAINING
-        </span>
-        <h1 className="font-display text-5xl sm:text-6xl font-bold text-paper-100 mb-3">
-          Your twin trains itself
-        </h1>
-        <p className="text-lg text-paper-300 mb-12 max-w-md">
-          Ingests videos, learns the voice — watch it happen in real time.
-        </p>
-
-        {/* The training core — a large glowing ring, the visual anchor
-            of the whole page instead of a small progress bar in a card */}
-        <div className="relative flex items-center justify-center mb-10">
-          <div
-            className="absolute h-64 w-64 rounded-full blur-[60px] opacity-40 transition-colors duration-700"
-            style={{ background: ringColor }}
-          />
-          <svg width="220" height="220" viewBox="0 0 220 220" className="relative">
-            <circle cx="110" cy="110" r="96" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" />
-            <circle
-              cx="110" cy="110" r="96" fill="none" stroke={ringColor} strokeWidth="10" strokeLinecap="round"
-              strokeDasharray={2 * Math.PI * 96}
-              strokeDashoffset={2 * Math.PI * 96 * (1 - (isReady ? 1 : isError ? 1 : percent / 100))}
-              transform="rotate(-90 110 110)"
-              style={{ transition: "stroke-dashoffset 0.6s ease, stroke 0.5s ease" }}
-            />
-          </svg>
-          <div className="absolute flex flex-col items-center">
-            {isReady ? (
-              <span className="text-5xl">✓</span>
-            ) : isError ? (
-              <span className="text-5xl text-rec-500">!</span>
-            ) : showWaiting ? (
-              <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-white/20 border-t-coral-400" />
-            ) : (
-              <span className="font-display text-4xl font-bold text-paper-100">{percent}%</span>
-            )}
-          </div>
-        </div>
-
-        <div className="w-full max-w-md">
+      <div className="mt-7 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="surface flex flex-col p-6 sm:p-8 animate-fade-up" style={{ animationDelay: "80ms" }}>
           {showStartForm && (
-            <div className="glass-panel rounded-2xl border border-white/15 bg-white/10 p-6 flex flex-col gap-3">
-                <input
-                  value={channelId}
-                  onChange={(e) => setChannelId(e.target.value)}
-                  placeholder="Paste a video URL, channel URL, @handle, or ID (optional)"
-                  className="rounded-lg border border-white/15 bg-black/20 px-4 py-3 text-sm text-paper-100 placeholder:text-paper-300/40 outline-none focus:border-coral-400 transition-colors"
-                />
-                <button
-                  onClick={() => startTraining(!channelId.trim())}
-                  disabled={starting}
-                  className="rounded-full bg-gradient-to-r from-rec-500 to-rec-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-rec-500/30 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 transition-all"
-                >
-                  {starting ? "Starting…" : channelId.trim() ? (isDirectVideoUrl(channelId.trim()) ? "Ingest this video" : "Ingest my channel") : "Load sample creator"}
-                </button>
-                <p className="text-xs text-paper-300/70">
-                  {!channelId.trim()
-                    ? "Leave blank to train on bundled sample data — no YouTube access needed."
-                    : isDirectVideoUrl(channelId.trim())
-                    ? "Trains only on this specific video — other videos on the channel are ignored."
-                    : "Trains on up to 6 recent videos from this channel."}
-                </p>
-                {startError && <p className="text-sm text-rec-400">{startError}</p>}
+            <div className="flex flex-col gap-5">
+              <div>
+                <p className="font-display text-lg font-semibold text-fg">Choose a source</p>
+                <p className="mt-1 text-sm text-fg/50">A single video, a whole channel, or the bundled sample creator.</p>
               </div>
+              <div>
+                <label className="label" htmlFor="source">Video URL, channel URL, @handle, or ID <span className="text-fg/35">(optional)</span></label>
+                <div className="relative">
+                  <Icon name="link" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-fg/35" />
+                  <input
+                    id="source"
+                    value={channelId}
+                    onChange={(e) => setChannelId(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !starting && startTraining(!channelId.trim())}
+                    placeholder="https://youtube.com/watch?v=… or @yourchannel"
+                    className="field pl-10"
+                  />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    { k: "sample", label: "Sample creator", icon: "sparkles", on: !trimmed },
+                    { k: "video", label: "Single video", icon: "play", on: !!trimmed && isDirectVideoUrl(trimmed) },
+                    { k: "channel", label: "Channel", icon: "youtube", on: !!trimmed && !isDirectVideoUrl(trimmed) },
+                  ].map((c) => (
+                    <span
+                      key={c.k}
+                      className={`chip transition-all ${c.on ? "!border-coral-400/40 !bg-coral-400/10 !text-coral-300" : "opacity-50"}`}
+                    >
+                      <Icon name={c.icon} size={12} /> {c.label}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-fg/45">{sourceHint}</p>
+              </div>
+              <button onClick={() => startTraining(!channelId.trim())} disabled={starting} className="btn btn-primary btn-lg w-full">
+                {starting ? (
+                  <><Spinner size={16} /> Starting…</>
+                ) : (
+                  <>
+                    <Icon name="sparkles" size={16} />
+                    {trimmed ? (isDirectVideoUrl(trimmed) ? "Ingest this video" : "Ingest my channel") : "Load sample creator"}
+                  </>
+                )}
+              </button>
+              {startError && <Alert>{startError}</Alert>}
+            </div>
           )}
 
-          {showWaiting && <p className="text-paper-300">Starting up…</p>}
-
-          {showProgress && status && (
-            <div>
-              <p className="text-lg text-paper-100 font-medium">{STAGE_LABELS[status.stage] ?? status.stage}</p>
-              {status.videos_total > 0 && (
-                <p className="font-mono-timecode text-xs text-paper-300 mt-1">
-                  {status.videos_processed}/{status.videos_total} videos
+          {!showStartForm && (
+            <div className="flex flex-col">
+              <div className="flex items-center justify-between">
+                <p className="font-display text-lg font-semibold text-fg">
+                  {isReady ? "Twin trained" : isError ? "Training didn\u2019t finish" : showWaiting ? "Starting up…" : STAGE_LABELS[status!.stage] ?? status!.stage}
                 </p>
+                {status && status.videos_total > 0 && (
+                  <span className="chip font-mono-timecode">
+                    <Icon name="video" size={12} /> {status.videos_processed}/{status.videos_total} videos
+                  </span>
+                )}
+              </div>
+
+              <ol className="relative mt-6 space-y-1">
+                {PIPELINE.map((p, i) => {
+                  const done = isReady ? true : stageIdx > i;
+                  const active = !isReady && !isError && (stageIdx === i || (showWaiting && i === 0));
+                  const failed = isError && (stageIdx === i || (stageIdx === -1 && i === 0));
+                  return (
+                    <li
+                      key={p.key}
+                      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-500 ${active ? "bg-tint/[0.05] ring-1 ring-tint/10" : ""}`}
+                    >
+                      <span
+                        className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-500 ${
+                          failed
+                            ? "bg-rec-500/15 text-rec-300 ring-1 ring-rec-500/40"
+                            : done
+                            ? "bg-verified-500/12 text-verified-400 ring-1 ring-verified-500/30"
+                            : active
+                            ? "bg-coral-400/15 text-coral-300 ring-1 ring-coral-400/40 shadow-[0_0_16px_rgba(255,130,102,0.35)]"
+                            : "bg-tint/[0.04] text-fg/30 ring-1 ring-tint/[0.08]"
+                        }`}
+                      >
+                        {failed ? <Icon name="alert" size={15} /> : done ? <Icon name="check" size={15} strokeWidth={2.25} /> : active ? <Spinner size={15} /> : <Icon name={p.icon} size={15} />}
+                      </span>
+                      <span className={`text-sm ${done || active ? "text-fg" : "text-fg/40"}`}>{p.label}</span>
+                      {active && status && <span className="ml-auto font-mono-timecode text-xs text-coral-300">{percent}%</span>}
+                      {done && !isReady && <span className="ml-auto font-mono-timecode text-[11px] text-fg/30">done</span>}
+                    </li>
+                  );
+                })}
+              </ol>
+
+              {isError && status && (
+                <div className="mt-6 flex flex-col items-start gap-4">
+                  <Alert>{status.detail}</Alert>
+                  <button onClick={resetTraining} className="btn btn-primary">
+                    <Icon name="refresh" size={15} /> Try again
+                  </button>
+                </div>
+              )}
+
+              {isReady && status?.detail && (
+                <div className="mt-6"><Alert tone="success">{status.detail}</Alert></div>
+              )}
+
+              {!isError && (
+                <button onClick={resetTraining} className="btn btn-ghost btn-sm mt-5 w-fit">
+                  <Icon name="refresh" size={14} /> Start over
+                </button>
               )}
             </div>
           )}
 
-          {isError && status && (
-            <div className="flex flex-col items-center gap-4">
-              <p className="text-lg font-medium text-paper-100">Training didn&apos;t finish</p>
-              <p className="text-sm leading-relaxed text-rec-400 max-w-sm">{status.detail}</p>
-              <button
-                onClick={resetTraining}
-                className="rounded-full bg-gradient-to-r from-rec-500 to-rec-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-rec-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
-              >
-                Try again
-              </button>
-            </div>
-          )}
-
-          {isReady && status && (
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-lg font-medium text-paper-100">Twin trained</p>
-              {status.detail && <p className="text-sm text-paper-300 max-w-sm">{status.detail}</p>}
-            </div>
-          )}
-
-          {!showStartForm && !isError && (
-            <button
-              onClick={resetTraining}
-              className="mt-4 text-sm text-paper-300 underline hover:text-paper-100 transition-colors"
-            >
-              Start over
-            </button>
-          )}
         </div>
 
-        <div className="mt-14 flex items-center gap-4">
-          <button
-            onClick={() => router.push("/dashboard/connect")}
-            className="glass-pill rounded-full border border-white/15 px-6 py-2.5 text-sm text-paper-300 hover:bg-white/10 transition-colors"
-          >
-            ← Back
-          </button>
-          <button
-            onClick={() => router.push("/dashboard/review")}
-            disabled={!isReady}
-            className="rounded-full bg-gradient-to-r from-rec-500 to-rec-600 px-8 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rec-500/30 hover:scale-[1.03] active:scale-[0.98] disabled:opacity-40 disabled:hover:scale-100 transition-all"
-          >
-            Next →
-          </button>
+        {/* Training core */}
+        <div className="surface-solid relative flex min-h-[420px] flex-col items-center justify-center overflow-hidden p-8 animate-fade-up" style={{ animationDelay: "160ms" }}>
+          <div className="absolute inset-0 bg-dots opacity-40" />
+          <div className="relative">
+            <RadialGauge
+              value={isReady || isError ? 100 : percent}
+              color={ringColor}
+              size={260}
+              stroke={14}
+              halo={showProgress}
+              indeterminate={showWaiting}
+            >
+              {isReady ? (
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-verified-500 text-white shadow-glow-green animate-scale-in">
+                  <Icon name="check" size={32} strokeWidth={2.5} />
+                </span>
+              ) : isError ? (
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-rec-500 text-white shadow-glow animate-scale-in">
+                  <Icon name="alert" size={28} />
+                </span>
+              ) : showWaiting ? (
+                <span className="font-mono-timecode text-xs uppercase tracking-[0.2em] text-fg/50">Starting</span>
+              ) : showProgress ? (
+                <>
+                  <span className="font-display text-6xl font-semibold tabular-nums text-fg">
+                    {percent}
+                    <span className="text-2xl text-fg/40">%</span>
+                  </span>
+                  <span className="mt-2 max-w-[140px] text-center font-mono-timecode text-[10px] uppercase leading-relaxed tracking-[0.16em] text-fg/45">
+                    {STAGE_LABELS[status!.stage] ?? status!.stage}
+                  </span>
+                </>
+              ) : (
+                <span className="flex flex-col items-center gap-2 text-fg/40">
+                  <Icon name="cpu" size={34} strokeWidth={1.5} />
+                  <span className="font-mono-timecode text-[10px] uppercase tracking-[0.2em]">Idle</span>
+                </span>
+              )}
+            </RadialGauge>
+          </div>
+          <p className="relative mt-8 max-w-xs text-center text-sm text-fg/50">
+            {isReady
+              ? "Voice learned and videos indexed. Review the persona next."
+              : isError
+              ? "The run stopped before finishing — nothing was published."
+              : showStartForm
+              ? "Pick a source to start. Progress streams here live."
+              : "Training runs on the AI service — you can watch every stage."}
+          </p>
         </div>
       </div>
-    </div>
+      <StageHandoff
+        done={isReady}
+        doneTitle="Knowledge base ready"
+        doneBody={
+          status && status.videos_total > 0
+            ? `${status.videos_total} video${status.videos_total === 1 ? "" : "s"} transcribed, learned and indexed.`
+            : "Videos transcribed, learned and indexed."
+        }
+        pendingHint={showStartForm ? "Choose a source to start training." : isError ? "Training stopped — start again above." : "Training is running — this panel updates live."}
+        nextHref="/dashboard/review"
+        nextLabel="Continue to Persona"
+      />
+    </AppShell>
   );
 }
+
+TrainStep.getLayout = withStudio;

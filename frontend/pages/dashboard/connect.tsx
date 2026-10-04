@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import Link from "next/link";
 import Script from "next/script";
-import { api, authHeader, logout } from "@/lib/api";
-import Logo from "@/components/Logo";
+import { api, authHeader } from "@/lib/api";
+import { errorMessage, readJSON } from "@/lib/browser";
+import AppShell from "@/components/AppShell";
+import { StageHandoff, withStudio } from "@/components/StudioWorkspace";
+import { Alert, Icon, PageHeader, Spinner } from "@/components/ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 
@@ -27,13 +30,24 @@ export default function ConnectStep() {
 
   useEffect(() => {
     const s = localStorage.getItem("youtwin_session");
-    const c = localStorage.getItem("youtwin_creator");
+    const c = readJSON<Creator>("youtwin_creator");
     if (!s || !c) {
       router.replace("/login");
       return;
     }
     setSession(s);
-    setCreator(JSON.parse(c));
+    setCreator(c);
+    // Refresh from the server: googleLinked in localStorage can be stale
+    // (e.g. the Google account was linked or unlinked in another tab).
+    api
+      .get("/auth/me", { headers: authHeader(s) })
+      .then(({ data }) => {
+        if (data?.creator) {
+          localStorage.setItem("youtwin_creator", JSON.stringify(data.creator));
+          setCreator(data.creator);
+        }
+      })
+      .catch(() => {});
     const cachedChannel = localStorage.getItem("youtwin_channel_name");
     if (cachedChannel) setChannelName(cachedChannel);
   }, [router]);
@@ -112,7 +126,7 @@ export default function ConnectStep() {
       localStorage.setItem("youtwin_creator", JSON.stringify(data.creator));
       setCreator(data.creator);
     } catch (err: any) {
-      setAuthError(err?.response?.data?.error ?? "Couldn't link that Google account. Try again.");
+      setAuthError(errorMessage(err, "Couldn't link that Google account. Try again."));
     }
   }
 
@@ -120,7 +134,7 @@ export default function ConnectStep() {
     if (!gsiReady || !GOOGLE_CLIENT_ID || !creator || creator.googleLinked) return;
     if (!window.google) return;
     window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
-    window.google.accounts.id.renderButton(document.getElementById("google-signin-button"), { theme: "filled_black", size: "large", width: 300 });
+    window.google.accounts.id.renderButton(document.getElementById("google-signin-button"), { theme: "filled_black", size: "large", width: 300, shape: "pill" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gsiReady, creator]);
 
@@ -129,93 +143,157 @@ export default function ConnectStep() {
   const ringColor = linked ? "#10B981" : "#FF8266";
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-ink-950 flex flex-col">
+    <AppShell setupStep={1} title="Connect channel" accent={linked ? "#10B981" : "#C8302B"} accent2="#E0AE4E">
       {GOOGLE_CLIENT_ID && <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" onLoad={() => setGsiReady(true)} />}
 
-      <div className="bg-orb-a pointer-events-none absolute -left-32 top-[15%] h-[520px] w-[520px] rounded-full opacity-40 blur-[120px]" style={{ background: `radial-gradient(circle, ${ringColor} 0%, transparent 70%)` }} />
-      <div className="bg-orb-b pointer-events-none absolute right-[-20%] bottom-[10%] h-[480px] w-[480px] rounded-full opacity-30 blur-[120px]" style={{ background: "radial-gradient(circle, #D9A441 0%, transparent 70%)" }} />
-      <div className="absolute inset-0 opacity-[0.12]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "56px 56px" }} />
+      <PageHeader
+        compact
+        title="Connect your channel"
+        description={<>Signed in as <span className="text-fg/85">{creator.displayName}</span> — now authorize channel access.</>}
+      />
 
-      <nav className="relative flex items-center justify-between px-8 py-6">
-        <Link href="/home"><Logo dark /></Link>
-        <button onClick={async () => { await logout(); router.push("/login"); }} className="glass-pill rounded-full border border-white/15 px-4 py-2 text-xs text-paper-300 hover:bg-white/10 transition-colors">
-          Log out
-        </button>
-      </nav>
-
-      <div className="relative flex-1 flex flex-col items-center justify-center px-6 py-10 text-center">
-        <span className="font-mono-timecode text-xs tracking-[0.25em] text-paper-300 mb-4">STEP 1 OF 4 &middot; CONNECT</span>
-        <h1 className="font-display text-5xl sm:text-6xl font-bold text-paper-100 mb-3">Connect your channel</h1>
-        <p className="text-lg text-paper-300 mb-12 max-w-md">
-          Signed in as {creator.displayName} — now authorize channel access.
-        </p>
-
-        {/* Two-ring "linking" visual — unlinked shows separate dashed
-            rings, linked shows them merged and glowing solid. */}
-        <div className="relative flex items-center justify-center mb-10 h-[220px] w-[260px]">
-          <div className="absolute h-64 w-64 rounded-full blur-[60px] opacity-40 transition-colors duration-700" style={{ background: ringColor }} />
-          <svg width="260" height="180" viewBox="0 0 260 180" className="relative">
-            <circle cx="95" cy="90" r="70" fill="none" stroke={linked ? ringColor : "rgba(255,255,255,0.15)"} strokeWidth="8" strokeDasharray={linked ? undefined : "6 8"} style={{ transition: "all 0.6s ease" }} />
-            <circle cx="165" cy="90" r="70" fill="none" stroke={linked ? ringColor : "rgba(255,255,255,0.15)"} strokeWidth="8" strokeDasharray={linked ? undefined : "6 8"} style={{ transition: "all 0.6s ease" }} />
-          </svg>
-          <div className="absolute flex flex-col items-center">
-            {linked ? <span className="text-5xl">✓</span> : <span className="text-3xl">🎬</span>}
+      <div className="mt-7 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        {/* Action card */}
+        <div className="surface flex flex-col p-6 sm:p-8 animate-fade-up" style={{ animationDelay: "80ms" }}>
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-b from-[#FF3B30] to-[#C8302B] text-white shadow-glow">
+              <Icon name="youtube" size={20} />
+            </span>
+            <div>
+              <p className="font-medium text-fg">YouTube channel access</p>
+              <p className="text-sm text-fg/50">{linked ? "Authorized" : "Not connected yet"}</p>
+            </div>
+            <span
+              className={`ml-auto inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                linked ? "bg-verified-500/10 text-verified-400 ring-1 ring-verified-500/30" : "bg-tint/[0.05] text-fg/55 ring-1 ring-tint/10"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${linked ? "bg-verified-500" : "bg-fg/40"}`} />
+              {linked ? "Connected" : "Pending"}
+            </span>
           </div>
-        </div>
 
-        <div className="w-full max-w-md">
+          <div className="hairline my-6" />
+
           {!linked ? (
             GOOGLE_CLIENT_ID ? (
-              <div className="glass-panel rounded-2xl border border-white/15 bg-white/10 p-6 flex flex-col items-center gap-3">
-                <div id="google-signin-button" />
-                {authError && <p className="text-sm text-rec-400">{authError}</p>}
-                <p className="text-xs text-paper-300/70 max-w-xs">
-                  This links a real Google account so YouTwin can read your channel&apos;s videos —
-                  separate from your YouTwin login.
+              <div className="flex flex-col items-start gap-4">
+                <p className="text-sm leading-relaxed text-fg/60">
+                  This links a real Google account so YouTwin can read your channel&apos;s videos — separate from your YouTwin login.
                 </p>
+                <div className="min-h-[44px] rounded-full" id="google-signin-button" />
+                {!gsiReady && (
+                  <p className="flex items-center gap-2 text-xs text-fg/45"><Spinner size={14} /> Loading Google Sign-In…</p>
+                )}
+                {authError && <Alert>{authError}</Alert>}
               </div>
             ) : (
-              <div className="glass-panel rounded-2xl border border-white/15 bg-white/10 p-6 text-sm text-paper-300 space-y-2">
-                <p className="font-medium text-rec-400">Google Sign-In isn&apos;t configured yet.</p>
-                <p>Set <code className="bg-black/30 px-1 rounded">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> in <code className="bg-black/30 px-1 rounded">frontend/.env.local</code>, then restart the frontend.</p>
-              </div>
+              <Alert tone="info">
+                <p className="font-medium">Google Sign-In isn&apos;t configured yet.</p>
+                <p className="mt-1 text-fg/60">
+                  Set <code className="rounded bg-sunk/30 px-1.5 py-0.5 font-mono-timecode text-[12px]">NEXT_PUBLIC_GOOGLE_CLIENT_ID</code> in{" "}
+                  <code className="rounded bg-sunk/30 px-1.5 py-0.5 font-mono-timecode text-[12px]">frontend/.env.local</code>, then restart the frontend.
+                </p>
+              </Alert>
             )
           ) : (
-            <div className="flex flex-col items-center gap-3">
-              <p className="text-lg font-medium text-paper-100">Channel access authorized</p>
-              <Link href="/dashboard/create-video" className="text-sm text-cited-400 underline hover:text-cited-300">
-                Or, create an AI video for your channel →
-              </Link>
+            <div className="flex flex-col gap-4">
+              <Alert tone="success">Channel access authorized</Alert>
               {channelName ? (
-                <div className="glass-pill flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2">
-                  <span className="text-rec-500">▶</span>
-                  <span className="text-sm font-medium text-paper-100">{channelName}</span>
+                <div className="flex items-center gap-3 rounded-xl border border-tint/10 bg-tint/[0.03] p-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-rec-500/15 text-rec-400">
+                    <Icon name="play" size={14} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-fg/45">Linked channel</p>
+                    <p className="truncate text-sm font-medium text-fg">{channelName}</p>
+                  </div>
+                  <Icon name="check-circle" size={18} className="ml-auto text-verified-500" />
                 </div>
               ) : channelLoading ? (
-                <p className="text-sm text-paper-300">Waiting for Google permission…</p>
+                <p className="flex items-center gap-2 text-sm text-fg/60"><Spinner size={15} /> Waiting for Google permission…</p>
               ) : (
-                <div className="flex flex-col items-center gap-1.5">
-                  <button onClick={fetchChannelName} className="glass-pill rounded-full border border-white/15 px-4 py-2 text-sm text-paper-300 hover:bg-white/10 transition-colors">
-                    ▶ Show my YouTube channel name
+                <div className="flex flex-col items-start gap-2">
+                  <button onClick={fetchChannelName} className="btn btn-secondary">
+                    <Icon name="youtube" size={16} /> Show my YouTube channel name
                   </button>
-                  {channelError && <p className="max-w-xs text-xs leading-relaxed text-rec-400">{channelError}</p>}
+                  {channelError && <Alert>{channelError}</Alert>}
                 </div>
               )}
+              <Link href="/dashboard/twins" className="inline-flex w-fit items-center gap-1.5 text-sm text-coral-400 hover:text-coral-300">
+                Managing multiple videos? See all your twins <Icon name="arrow-right" size={14} />
+              </Link>
             </div>
           )}
+
         </div>
 
-        <div className="mt-14 flex items-center gap-4">
-          <span />
-          <button
-            onClick={() => router.push("/dashboard/train")}
-            disabled={!linked}
-            className="rounded-full bg-gradient-to-r from-rec-500 to-rec-600 px-8 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rec-500/30 hover:scale-[1.03] active:scale-[0.98] disabled:opacity-40 disabled:hover:scale-100 transition-all"
-          >
-            Next →
-          </button>
+        {/* Linking visual */}
+        <div className="surface-solid relative flex min-h-[380px] flex-col items-center justify-center overflow-hidden p-8 animate-fade-up" style={{ animationDelay: "160ms" }}>
+          <div className="absolute inset-0 bg-dots opacity-40" />
+          <div className="absolute h-72 w-72 rounded-full blur-[80px] opacity-40 transition-colors duration-700" style={{ background: ringColor }} />
+          <div className="relative flex items-center">
+            <div
+              className={`flex h-28 w-28 items-center justify-center rounded-3xl border bg-gradient-to-b from-night-700 to-night-900 shadow-lift transition-all duration-700 ${
+                linked ? "translate-x-3 border-verified-500/40" : "border-tint/10"
+              }`}
+            >
+              <Logo />
+            </div>
+            <div className="relative mx-2 h-px w-16">
+              <div className={`absolute inset-0 transition-all duration-700 ${linked ? "bg-gradient-to-r from-verified-400 to-verified-500 shadow-[0_0_12px_#10B981]" : "border-t border-dashed border-tint/20"}`} />
+              <span
+                className={`absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border transition-all duration-700 ${
+                  linked ? "border-verified-500 bg-verified-500 text-white shadow-glow-green" : "border-tint/15 bg-night-800 text-fg/40"
+                }`}
+              >
+                <Icon name={linked ? "check" : "link"} size={13} strokeWidth={2.25} />
+              </span>
+            </div>
+            <div
+              className={`flex h-28 w-28 items-center justify-center rounded-3xl border bg-gradient-to-b from-night-700 to-night-900 shadow-lift transition-all duration-700 ${
+                linked ? "-translate-x-3 border-verified-500/40" : "border-tint/10"
+              }`}
+            >
+              <span className="flex h-12 w-16 items-center justify-center rounded-xl bg-gradient-to-b from-[#FF3B30] to-[#C8302B] text-white shadow-glow">
+                <Icon name="play" size={20} />
+              </span>
+            </div>
+          </div>
+          <p className="relative mt-10 font-display text-lg font-semibold text-fg">{linked ? "Linked and ready" : "Waiting for authorization"}</p>
+          <ul className="relative mt-5 w-full max-w-xs space-y-2.5 text-sm text-fg/55">
+            {[
+              ["eye", "Read-only access to your channel's videos"],
+              ["lock", "Separate from your YouTwin login"],
+              ["upload", "Uploads always ask for their own permission"],
+            ].map(([ic, t]) => (
+              <li key={t} className="flex items-center gap-2.5">
+                <Icon name={ic} size={15} className="text-fg/35" />
+                {t}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
-    </div>
+      <StageHandoff
+        done={linked}
+        doneTitle="Channel connected"
+        doneBody={channelName ? `Your twin will learn from ${channelName}.` : "YouTube access is authorized for this account."}
+        pendingHint="Authorize YouTube access to continue."
+        nextHref="/dashboard/train"
+        nextLabel="Continue to Knowledge"
+      />
+    </AppShell>
+  );
+}
+
+ConnectStep.getLayout = withStudio;
+
+function Logo() {
+  return (
+    <svg width="44" height="44" viewBox="0 0 40 40" fill="none" aria-hidden>
+      <path d="M12 12L20 20L12 28" stroke="currentColor" className="text-fg" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M28 12L20 20L28 28" stroke="#E0483F" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

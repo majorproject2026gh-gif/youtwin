@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "YouTwin — your channel's AI twin",
+  "short_name": "YouTwin",
+  "description": "Chat with a creator's AI digital twin — every answer grounded in their real videos and cited to the second.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#08080A",
+  "theme_color": "#08080A",
+  "lang": "en",
+  "categories": ["education", "entertainment", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Twin Studio", "short_name": "Studio", "url": "/dashboard", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "My Twins", "url": "/dashboard/twins", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Analytics", "url": "/dashboard/analytics", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

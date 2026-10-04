@@ -1,17 +1,33 @@
 import type { AppProps } from "next/app";
+import type { NextPage } from "next";
+import { useEffect, type ReactElement, type ReactNode } from "react";
 import Head from "next/head";
-import { THEME_INIT_SCRIPT } from "@/lib/theme";
+import { ThemeProvider } from "@/lib/theme";
+import { registerServiceWorker } from "@/lib/pwa";
 import "../styles/globals.css";
 
-export default function App({ Component, pageProps }: AppProps) {
+/**
+ * Pages can declare a persistent layout via `Page.getLayout`. The layout
+ * stays mounted while navigating between pages that share it — that's
+ * what lets the Studio sidebar, backdrop and workspace stay put while
+ * only the active panel changes, instead of the whole screen reloading.
+ */
+export type NextPageWithLayout<P = object> = NextPage<P> & {
+  getLayout?: (page: ReactElement) => ReactNode;
+};
+
+type AppPropsWithLayout = AppProps & { Component: NextPageWithLayout };
+
+export default function App({ Component, pageProps }: AppPropsWithLayout) {
+  const getLayout = Component.getLayout ?? ((page) => page);
+  useEffect(() => registerServiceWorker(), []);
   return (
-    <>
+    <ThemeProvider>
       <Head>
-        {/* Runs before hydration so the page never flashes the wrong
-            theme — must be a synchronous inline script, not useEffect. */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>YouTwin</title>
       </Head>
-      <Component {...pageProps} />
-    </>
+      {getLayout(<Component {...pageProps} />)}
+    </ThemeProvider>
   );
 }
