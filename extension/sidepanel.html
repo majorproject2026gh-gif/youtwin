@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YouTwin</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="top">
+    <img src="icons/icon32.png" alt="" width="22" height="22" />
+    <div class="who">
+      <strong id="creator">YouTwin</strong>
+      <span id="status" class="muted">Open a YouTube video</span>
+    </div>
+    <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <section id="settings" class="card" hidden>
+    <h2>Connect to YouTwin</h2>
+    <label>Web app URL<input id="appUrl" type="url" placeholder="https://your-youtwin.vercel.app" /></label>
+    <label>API URL<input id="apiUrl" type="url" placeholder="https://your-api.onrender.com" /></label>
+    <p class="muted small">Only public viewer endpoints are used — no sign-in, nothing about you is stored.</p>
+    <div class="row"><button id="saveSettings" class="btn primary">Save</button><span id="settingsMsg" class="small"></span></div>
+  </section>
+
+  <section id="watching" class="card watching" hidden>
+    <div class="row between">
+      <span class="small muted">Watching</span>
+      <label class="small switch"><input id="tieToMoment" type="checkbox" checked /> Tie answers to this moment</label>
+    </div>
+    <p id="videoTitle" class="title"></p>
+    <p class="small"><span class="pill" id="playhead">0:00</span> <span id="channel" class="muted"></span></p>
+  </section>
+
+  <section id="linkBox" class="card" hidden>
+    <p class="small">No twin link found in this video's description. Paste the creator's YouTwin link:</p>
+    <div class="row"><input id="manualLink" placeholder="…/twin/their-handle" /><button id="useLink" class="btn">Use</button></div>
+  </section>
+
+  <main id="log" class="log" aria-live="polite"></main>
+
+  <form id="composer" class="composer">
+    <select id="language" aria-label="Reply language">
+      <option>English</option><option>Hindi</option><option>Spanish</option><option>French</option><option>Marathi</option>
+    </select>
+    <textarea id="input" rows="2" maxlength="1000" placeholder="Ask about this video…" disabled></textarea>
+    <button id="send" class="btn primary" type="submit" disabled>Send</button>
+  </form>
+  <footer class="foot small"><a id="openFull" href="#" target="_blank" rel="noopener" hidden>Open full chat ↗</a></footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

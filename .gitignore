@@ -30,3 +30,27 @@ Thumbs.db
 # regenerated on demand - shouldn't live in git)
 *.mp4
 *.mov
+
+# Legacy duplicate of the web app at the repo root. The real app lives in
+# frontend/ (Vercel's Root Directory is `frontend`). Ignored so an
+# accidental `git add -A` can never publish or deploy the stale copy.
+/pages/
+/components/
+/lib/
+/styles/
+/package.json
+/package-lock.json
+/next.config.js
+/next-env.d.ts
+/postcss.config.js
+/tailwind.config.js
+/tsconfig.json
+/Dockerfile
+/.env.example
+
+# Local working files that shouldn't be published
+/Claude outputs/
+/image.png
+/image copy.png
+*.bak
+YouTwin_Viva_Prep.pdf
