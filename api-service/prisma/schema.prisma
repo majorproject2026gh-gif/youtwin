@@ -32,6 +32,27 @@ model Twin {
   guardrails      Boolean  @default(true)
   createdAt       DateTime @default(now())
   messages        Message[]
+  viewers         Viewer[]
+}
+
+/// A person who opened a twin's share link and gave their name. One row
+/// per device per twin: deviceId is a random id kept in the viewer's
+/// browser, so two people who are both called "Rahul" stay separate.
+model Viewer {
+  id        String    @id @default(uuid())
+  twin      Twin      @relation(fields: [twinId], references: [id], onDelete: Cascade)
+  twinId    String
+  deviceId  String
+  name      String
+  device    String    @default("") // e.g. "Android · Chrome", from the user agent
+  language  String    @default("English") // last reply language they chose
+  visits    Int       @default(1)
+  firstSeen DateTime  @default(now())
+  lastSeen  DateTime  @default(now())
+  messages  Message[]
+
+  @@unique([twinId, deviceId])
+  @@index([twinId, lastSeen])
 }
 
 model Message {
@@ -43,4 +64,9 @@ model Message {
   grounded   Boolean  @default(true)
   confidence Float    @default(0)
   createdAt  DateTime @default(now())
+  // Who asked (null for chats logged before viewer names existed).
+  viewer     Viewer?  @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+  viewerId   String?
+
+  @@index([viewerId])
 }

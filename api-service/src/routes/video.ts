@@ -34,7 +34,7 @@ router.post("/generate", requireAuth, async (req: AuthedRequest, res) => {
  */
 router.get("/status/:jobId", requireAuth, async (req, res) => {
   try {
-    const { data } = await aiService.get(`/video/status/${req.params.jobId}`);
+    const { data } = await aiService.get(`/video/status/${encodeURIComponent(req.params.jobId)}`);
     res.json(data);
   } catch {
     res.status(404).json({ error: "No generation job found for this id" });

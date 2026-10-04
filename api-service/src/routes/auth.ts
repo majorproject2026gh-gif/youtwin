@@ -7,6 +7,11 @@ import { signSession, slugify, requireAuth, AuthedRequest, isDbUnreachableError,
 
 const router = Router();
 
+// Compared against when no account matches, so a failed login takes the
+// same time whether or not the username exists (no timing side-channel).
+const DUMMY_HASH = bcrypt.hashSync("youtwin-timing-equalizer", 10);
+const BAD_LOGIN = "Incorrect username/mobile number or password.";
+
 const oauthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 function serializeCreator(c: { id: string; displayName: string; handle: string; email: string | null }) {
@@ -30,7 +35,7 @@ const signupSchema = z.object({
     .string()
     .trim()
     .regex(/^\+?[0-9]{7,15}$/, "Enter a valid mobile number"),
-  password: z.string().min(6, "Password must be at least 6 characters").max(200),
+  password: z.string().min(8, "Password must be at least 8 characters").max(200),
 });
 
 /**
@@ -96,13 +101,12 @@ router.post("/login", async (req, res) => {
     const creator = await prisma.creator.findFirst({
       where: { OR: [{ username: identifier }, { mobileNumber: identifier }] },
     });
-    if (!creator) {
-      return res.status(401).json({ error: "No account found with that username/mobile number." });
-    }
-
-    const valid = await bcrypt.compare(password, creator.passwordHash);
-    if (!valid) {
-      return res.status(401).json({ error: "Incorrect password." });
+    // One generic message for both cases: distinct "no account" vs
+    // "wrong password" errors let anyone discover which usernames and
+    // mobile numbers are registered.
+    const valid = await bcrypt.compare(password, creator?.passwordHash ?? DUMMY_HASH);
+    if (!creator || !valid) {
+      return res.status(401).json({ error: BAD_LOGIN });
     }
 
     const session = signSession(creator.id);
